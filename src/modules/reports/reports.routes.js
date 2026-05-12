@@ -8,6 +8,7 @@ router.use(authenticate, requireAdmin);
 
 router.get('/summary', ctrl.getSummary);
 router.get('/agent/:id', ctrl.getAgentReport);
+router.get('/agent/:id/export', ctrl.exportAgentData);
 router.get('/export', ctrl.exportData);
 
 module.exports = router;

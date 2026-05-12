@@ -42,4 +42,28 @@ const exportData = async (req, res) => {
   }
 };
 
-module.exports = { getSummary, getAgentReport, exportData };
+const exportAgentData = async (req, res) => {
+  try {
+    const { format } = req.query;
+    const agentId = req.params.id;
+
+    if (format === 'excel') {
+      const workbook = await reportsService.exportAgentExcel(agentId);
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename=agent-hesabat-${agentId}-${Date.now()}.xlsx`);
+      await workbook.xlsx.write(res);
+      res.end();
+    } else if (format === 'pdf') {
+      const pdfBuffer = await reportsService.exportAgentPDF(agentId);
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename=agent-hesabat-${agentId}-${Date.now()}.pdf`);
+      res.send(pdfBuffer);
+    } else {
+      res.status(400).json({ success: false, message: 'format=excel və ya format=pdf olmalıdır' });
+    }
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+module.exports = { getSummary, getAgentReport, exportData, exportAgentData };

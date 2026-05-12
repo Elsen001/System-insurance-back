@@ -242,4 +242,179 @@ const exportPDF = async (filters = {}) => {
   });
 };
 
-module.exports = { getSummary, getAgentReport, exportExcel, exportPDF };
+const exportAgentExcel = async (agentId) => {
+  const report = await getAgentReport(agentId);
+
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = 'Insurance System';
+  workbook.created = new Date();
+
+  const sheet = workbook.addWorksheet('Agent Hesabatı');
+
+  // Agent məlumatları
+  sheet.mergeCells('A1:F1');
+  sheet.getCell('A1').value = `Agent: ${report.agent.name}`;
+  sheet.getCell('A1').font = { bold: true, size: 14 };
+  sheet.getCell('A2').value = `Email: ${report.agent.email}`;
+  sheet.getCell('A3').value = `Komissiya faizi: ${report.agent.commission_rate}%`;
+  sheet.getCell('A4').value = `Hesabat tarixi: ${new Date().toLocaleDateString('az-AZ')}`;
+
+  // Növ üzrə xülasə
+  const summarySheet = workbook.addWorksheet('Növ üzrə');
+  summarySheet.columns = [
+    { header: 'Sığorta növü', key: 'type', width: 20 },
+    { header: 'Say', key: 'count', width: 10 },
+    { header: 'Məbləğ (AZN)', key: 'total', width: 15 },
+  ];
+  summarySheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  summarySheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+
+  const typeLabels = { auto: 'Avtomobil (MTPL)', casco: 'Kasko', property: 'Əmlak', travel: 'Səfər' };
+  report.by_type.forEach(t => {
+    summarySheet.addRow({ type: typeLabels[t.type] || t.type, count: t.count, total: Number(t.total || 0) });
+  });
+  summarySheet.getColumn('C').numFmt = '#,##0.00';
+
+  // Sığorta siyahısı
+  sheet.addRow([]);
+  sheet.addRow([]);
+  const headerRow = 6;
+  const columns = ['Sığorta №', 'Növ', 'Müştəri', 'Telefon', 'Məbləğ (AZN)', 'Komissiya (AZN)', 'Başlama', 'Bitmə', 'Status'];
+  sheet.getRow(headerRow).values = columns;
+  sheet.getRow(headerRow).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  sheet.getRow(headerRow).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+
+  sheet.columns = [
+    { width: 20 }, { width: 18 }, { width: 25 }, { width: 15 },
+    { width: 15 }, { width: 16 }, { width: 13 }, { width: 13 }, { width: 12 }
+  ];
+
+  const statusLabels = { active: 'Aktiv', expired: 'Bitmiş', cancelled: 'Ləğv' };
+  let sumPremium = 0, sumCommission = 0;
+
+  report.policies.forEach(p => {
+    sumPremium += Number(p.premium_amount) || 0;
+    sumCommission += Number(p.commission_amount) || 0;
+    sheet.addRow([
+      p.policy_number,
+      typeLabels[p.type] || p.type,
+      p.customer_name,
+      p.customer_phone || '',
+      Number(p.premium_amount),
+      Number(p.commission_amount),
+      p.start_date ? new Date(p.start_date).toLocaleDateString('az-AZ') : '',
+      p.end_date ? new Date(p.end_date).toLocaleDateString('az-AZ') : '',
+      statusLabels[p.status] || p.status,
+    ]);
+  });
+
+  const lastRow = sheet.lastRow.number + 2;
+  sheet.getCell(`A${lastRow}`).value = 'CƏM:';
+  sheet.getCell(`A${lastRow}`).font = { bold: true };
+  sheet.getCell(`E${lastRow}`).value = sumPremium;
+  sheet.getCell(`E${lastRow}`).font = { bold: true };
+  sheet.getCell(`F${lastRow}`).value = sumCommission;
+  sheet.getCell(`F${lastRow}`).font = { bold: true };
+
+  // Komissiya statusu
+  const comSheet = workbook.addWorksheet('Komissiyalar');
+  comSheet.columns = [
+    { header: 'Status', key: 'status', width: 15 },
+    { header: 'Say', key: 'count', width: 10 },
+    { header: 'Məbləğ (AZN)', key: 'total', width: 15 },
+  ];
+  comSheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+  comSheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+
+  const comStatusLabels = { paid: 'Ödənilib', pending: 'Gözləyir' };
+  report.commissions.forEach(c => {
+    comSheet.addRow({ status: comStatusLabels[c.status] || c.status, count: c.count, total: Number(c.total || 0) });
+  });
+  comSheet.getColumn('C').numFmt = '#,##0.00';
+
+  return workbook;
+};
+
+const exportAgentPDF = async (agentId) => {
+  const report = await getAgentReport(agentId);
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
+    const buffers = [];
+    doc.on('data', b => buffers.push(b));
+    doc.on('end', () => resolve(Buffer.concat(buffers)));
+    doc.on('error', reject);
+
+    const typeLabels = { auto: 'Avtomobil (MTPL)', casco: 'Kasko', property: 'Əmlak', travel: 'Səfər' };
+    const statusLabels = { active: 'Aktiv', expired: 'Bitmiş', cancelled: 'Ləğv' };
+
+    doc.fontSize(20).text('Agent Hesabatı', { align: 'center' });
+    doc.fontSize(11).text(`Tarix: ${new Date().toLocaleDateString('az-AZ')}`, { align: 'center' });
+    doc.moveDown(1.5);
+
+    // Agent məlumatı
+    doc.fontSize(13).text('Agent Məlumatları', { underline: true });
+    doc.moveDown(0.5);
+    doc.fontSize(11)
+      .text(`Ad: ${report.agent.name}`)
+      .text(`Email: ${report.agent.email}`)
+      .text(`Komissiya faizi: ${report.agent.commission_rate}%`);
+    doc.moveDown(1);
+
+    // Növ üzrə
+    doc.fontSize(13).text('Sığorta Növləri üzrə', { underline: true });
+    doc.moveDown(0.5);
+    if (report.by_type.length === 0) {
+      doc.fontSize(11).text('Məlumat yoxdur');
+    } else {
+      report.by_type.forEach(t => {
+        doc.fontSize(11).text(
+          `${typeLabels[t.type] || t.type}: ${t.count} sığorta — ${Number(t.total || 0).toFixed(2)} AZN`
+        );
+      });
+    }
+    doc.moveDown(1);
+
+    // Komissiyalar
+    doc.fontSize(13).text('Komissiya Statusu', { underline: true });
+    doc.moveDown(0.5);
+    const comStatusLabels = { paid: 'Ödənilib', pending: 'Gözləyir' };
+    if (report.commissions.length === 0) {
+      doc.fontSize(11).text('Məlumat yoxdur');
+    } else {
+      report.commissions.forEach(c => {
+        doc.fontSize(11).text(
+          `${comStatusLabels[c.status] || c.status}: ${c.count} ədəd — ${Number(c.total || 0).toFixed(2)} AZN`
+        );
+      });
+    }
+    doc.moveDown(1);
+
+    // Sığorta siyahısı
+    doc.fontSize(13).text('Sığorta Siyahısı', { underline: true });
+    doc.moveDown(0.5);
+
+    if (report.policies.length === 0) {
+      doc.fontSize(11).text('Sığorta yoxdur');
+    } else {
+      report.policies.forEach(p => {
+        doc.fontSize(10).text(
+          `${p.policy_number} | ${typeLabels[p.type] || p.type} | ${p.customer_name} | ` +
+          `${Number(p.premium_amount).toFixed(2)} AZN | ${statusLabels[p.status] || p.status}`
+        );
+      });
+    }
+
+    // Ümumi
+    doc.moveDown(1);
+    const totalPremium = report.policies.reduce((s, p) => s + Number(p.premium_amount || 0), 0);
+    const totalCommission = report.policies.reduce((s, p) => s + Number(p.commission_amount || 0), 0);
+    doc.fontSize(11).font('Helvetica-Bold')
+      .text(`Ümumi premium: ${totalPremium.toFixed(2)} AZN`)
+      .text(`Ümumi komissiya: ${totalCommission.toFixed(2)} AZN`);
+
+    doc.end();
+  });
+};
+
+module.exports = { getSummary, getAgentReport, exportExcel, exportPDF, exportAgentExcel, exportAgentPDF };

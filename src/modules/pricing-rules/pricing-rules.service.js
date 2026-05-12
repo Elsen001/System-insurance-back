@@ -16,7 +16,7 @@ const getActive = async (policyType) => {
 };
 
 const create = async (data, adminId) => {
-  const { name, description, policy_type, condition_field, condition_operator, condition_value, bonus_percent } = data;
+  const { name, description, policy_type, condition_field, condition_operator, condition_value, bonus_percent, effective_from } = data;
   const [id] = await db('pricing_rules').insert({
     name, description, policy_type,
     condition_field: condition_field || null,
@@ -24,13 +24,14 @@ const create = async (data, adminId) => {
     condition_value: condition_value !== undefined ? condition_value : null,
     bonus_percent,
     is_active: true,
+    effective_from: effective_from || null,
     created_by: adminId,
   });
   return db('pricing_rules').where({ id }).first();
 };
 
 const update = async (id, data) => {
-  const { name, description, policy_type, condition_field, condition_operator, condition_value, bonus_percent, is_active } = data;
+  const { name, description, policy_type, condition_field, condition_operator, condition_value, bonus_percent, is_active, effective_from } = data;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
@@ -40,6 +41,7 @@ const update = async (id, data) => {
   if (condition_value !== undefined) update.condition_value = condition_value;
   if (bonus_percent !== undefined) update.bonus_percent = bonus_percent;
   if (is_active !== undefined) update.is_active = is_active;
+  if (effective_from !== undefined) update.effective_from = effective_from || null;
   await db('pricing_rules').where({ id }).update(update);
   return db('pricing_rules').where({ id }).first();
 };
@@ -50,12 +52,19 @@ const remove = async (id) => {
 };
 
 // Qaydaları verilən detallara tətbiq et — əlavə bonus faizini qaytarır
+// Yalnız effective_from tarixi NULL olan və ya indiki vaxtdan əvvəl olan qaydalar tətbiq olunur
 const applyRules = async (policyType, details) => {
   const rules = await getActive(policyType);
+  const now = new Date();
   let totalBonus = 0;
   const applied = [];
 
   for (const rule of rules) {
+    // effective_from yoxlanışı: əgər təyin olunubsa, yalnız həmin tarixdən sonra tətbiq olunur
+    if (rule.effective_from && new Date(rule.effective_from) > now) {
+      continue; // hələ qüvvəyə minməyib
+    }
+
     if (!rule.condition_field) {
       // Şərtsiz qayda — həmişə tətbiq olunur
       totalBonus += parseFloat(rule.bonus_percent);
